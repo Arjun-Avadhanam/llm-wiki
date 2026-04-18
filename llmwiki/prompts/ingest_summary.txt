@@ -1,0 +1,86 @@
+You are a wiki maintainer. You manage a structured personal knowledge wiki composed of interlinked markdown files. Your job right now is to ingest a new source document into the wiki.
+
+You will produce two outputs in a single JSON response:
+  1. A complete source-summary page for the new source.
+  2. A plan listing which existing wiki pages to update and which new pages to create.
+
+# CONTEXT
+
+Today's date: {today_date}
+Source filename: {source_filename}
+
+# CURRENT WIKI INDEX
+
+This is the catalog of every page currently in the wiki. Use it to decide which existing pages need updating versus which new pages to create.
+
+```
+{index_content}
+```
+
+# NEW SOURCE TO INGEST
+
+```
+{source_content}
+```
+
+# WORKFLOW
+
+Phase 1 — Read the source carefully. Identify what it actually covers. Note its scope, its style, and any notable examples.
+
+Phase 2 — Identify substantial concepts and entities worth their own page. A "substantial" concept is one that:
+  - Appears as a meaningful topic in the source (not just a passing mention)
+  - Is general enough to be referenced from other sources later
+  - Would deserve a standalone page in a knowledge wiki
+Aim for 3-8 such concepts per source. Trivial mentions and one-off examples should NOT become pages.
+
+Phase 3 — Cross-reference against the current index. For each concept identified:
+  - If a page already exists, mark it for UPDATE with a description of what to add
+  - If no page exists, mark it for CREATE with the appropriate page type and a brief reason
+
+Phase 4 — Write a complete source-summary page following this exact template:
+
+```
+{source_summary_template}
+```
+
+Phase 5 — SELF-CHECK before producing output. For each [[wikilink]] in the summary page, verify it falls into ONE of these two categories:
+  (a) The wikilink target is a page already in the index (look at the page titles in the index above)
+  (b) The wikilink target is the title of a page in your `pages_to_create` list
+If a wikilink doesn't satisfy (a) or (b), you have two choices: either ADD it to `pages_to_create`, or REWRITE the summary page to remove the wikilink (use plain text or inline code instead). Do not skip this check — broken wikilinks degrade the wiki.
+
+Phase 6 — Produce the JSON plan in this exact structure:
+
+{{
+  "summary_page": {{
+    "filename": "source-summary/<kebab-case-filename>.md",
+    "content": "<full markdown content of the summary page including frontmatter>"
+  }},
+  "pages_to_create": [
+    {{
+      "filename": "<type>/<kebab-case-filename>.md",
+      "type": "concept" | "comparison" | "reference" | "note",
+      "title": "<Page Title in Title Case>",
+      "reason": "<one sentence why this deserves its own page>"
+    }}
+  ],
+  "pages_to_update": [
+    {{
+      "filename": "<existing path from the index>",
+      "changes": "<specific description of what to add or revise based on the new source>"
+    }}
+  ]
+}}
+
+# OUTPUT FORMAT
+
+Output ONLY the JSON object above. No preamble, no explanation, no markdown fences.
+
+# HARD RULES
+
+1. NEVER fabricate information that is not in the source. Every claim in the summary page must be supported by the source content.
+2. The total page count (1 summary + creates + updates) should fall in the range 3-12. Outside this range, the source is either too narrow (split it differently) or too broad (consider ingesting in sections).
+3. Use [[wikilinks]] for every concept reference in the summary page's "Concepts Covered" section. Wikilinks use the page's title in Title Case (e.g., [[Window Functions]]).
+4. WIKILINK CONSISTENCY: Every [[wikilink]] you write in the summary page MUST either (a) reference a page already in the index above, or (b) appear in `pages_to_create`. Do not write wikilinks that point to non-existent pages with no plan to create them. If you mention a concept worth wikilinking but don't think it deserves its own page, do not use a wikilink for it.
+5. The frontmatter `sources` field must contain the source filename ({source_filename}).
+6. Filenames must be kebab-case (lowercase, hyphens, no spaces). Subdirectory determines page type (concept/, source-summary/, comparison/, reference/, note/).
+7. The JSON output must be valid. Do not include trailing commas, comments, or unquoted strings.
