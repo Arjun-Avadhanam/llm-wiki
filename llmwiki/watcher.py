@@ -25,15 +25,44 @@ from pathlib import Path
 
 from rich.console import Console
 from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 from watchdog.events import FileSystemEventHandler
 
 from llmwiki import wiki
 from llmwiki.config import load_config
 
+
+# Polling interval in seconds for PollingObserver on /mnt/c/ paths.
+_POLL_INTERVAL = 3
+
 console = Console()
 
 # Path to the PID file for daemon mode
 _PID_FILE = Path(load_config()["paths"]["wiki_dir"]) / "watcher.pid"
+
+
+def _make_observer(watch_path: str):
+    """Create the appropriate observer for the given path.
+
+    Uses PollingObserver for /mnt/ paths (Windows filesystem via WSL's
+    drvfs driver, where inotify doesn't work for external changes).
+    Uses the default inotify-based Observer for native ext4 paths.
+
+    Args:
+        watch_path: The directory path to watch.
+
+    Returns:
+        A watchdog Observer or PollingObserver instance.
+    """
+    # Resolve symlinks to get the real filesystem path.
+    # e.g., /home/arjun/LLM_Wiki/raw → /mnt/c/Users/.../raw
+    real_path = str(Path(watch_path).resolve())
+    if real_path.startswith("/mnt/"):
+        console.print(f"[dim]Using PollingObserver (interval={_POLL_INTERVAL}s) for /mnt/ path[/dim]")
+        return PollingObserver(timeout=_POLL_INTERVAL)
+    else:
+        console.print("[dim]Using inotify Observer for native path[/dim]")
+        return Observer()
 
 
 def _send_notification(title: str, message: str) -> None:
@@ -177,7 +206,7 @@ def run_watcher(daemon: bool = False) -> None:
     console.print(f"[bold]Watching {raw_dir} for new files...[/bold]")
     console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
 
-    observer = Observer()
+    observer = _make_observer(raw_dir)
     observer.schedule(_NewSourceHandler(), raw_dir, recursive=False)
     observer.start()
 
@@ -213,7 +242,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         raw_path = sys.argv[1]
         # Override the raw dir for this subprocess
-        observer = Observer()
+        observer = _make_observer(raw_path)
         observer.schedule(_NewSourceHandler(), raw_path, recursive=False)
         observer.start()
         try:
