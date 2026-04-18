@@ -5,5 +5,4 @@ openrouter_key*
 __pycache__/
 *.pyc
 .obsidian/
-wiki/Clippings/
-wiki/Table Aliases.md
+wiki/
