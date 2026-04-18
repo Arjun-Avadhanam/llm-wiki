@@ -1,0 +1,6 @@
+openai
+click
+python-frontmatter
+pyyaml
+rich
+watchdog

@@ -1,0 +1,9 @@
+venv/
+llm_wiki_venv/
+config.yaml
+openrouter_key*
+__pycache__/
+*.pyc
+.obsidian/
+wiki/Clippings/
+wiki/Table Aliases.md
