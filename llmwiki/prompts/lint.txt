@@ -55,6 +55,18 @@ Output a structured markdown report with these exact sections (use these heading
 ## Weak Cross-References
 - (one bullet per pair of pages that should link to each other but don't)
 - (write "None found." if no weak cross-references)
+
+## Recommended Next Topics
+Suggest the top 3-5 topics the user should ingest sources for next.
+Prioritize by:
+  1. Number of broken [[wikilinks]] that would be resolved (most impact first)
+  2. How many existing pages reference the topic (high connectivity = high value)
+  3. Whether the topic is foundational (e.g., "WHERE Clause" underpins many SQL concepts)
+
+For each recommendation:
+- Name the topic
+- List which existing pages reference it (and how many)
+- Suggest the type of source that would cover it (e.g., "a tutorial on SQL WHERE and filtering" or "PostgreSQL docs section on indexes")
 ```
 
 # HARD RULES
