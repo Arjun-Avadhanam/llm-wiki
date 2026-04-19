@@ -578,7 +578,9 @@ Output a structured report with sections for each issue type. For each issue, be
 
 Logical next steps after this week, in priority order:
 
-1. **Confidence and lifecycle frontmatter** — Add `confidence: high|medium|low|stale` and `lifecycle: draft|reviewed|verified|stale|archived` fields to page frontmatter. Lint can flag pages that haven't been verified, that are stale (last_updated > 90 days with high confidence), or that need review. Low effort to add since `parse_frontmatter()` already accepts arbitrary fields — just extend the page templates and ingest prompt to populate them.
+1. **Context window management (chunking)** — Implement simple chunking for long sources that exceed the LLM's effective context window. Split source into sections, ingest each section with metadata noting which part it is and what the full source covers. Needed when ingesting long articles, papers, or book chapters (>15K tokens). Current sources are small enough that this hasn't been triggered, but it will be needed as the wiki grows. Implementation: add a `_chunk_source()` function in `ingest.py` that splits by markdown headings or by token count, then calls `run_ingest()` per chunk with a modified source filename suffix (e.g., `paper-part-1.md`).
+
+2. **Confidence and lifecycle frontmatter** — Add `confidence: high|medium|low|stale` and `lifecycle: draft|reviewed|verified|stale|archived` fields to page frontmatter. Lint can flag pages that haven't been verified, that are stale (last_updated > 90 days with high confidence), or that need review. Low effort to add since `parse_frontmatter()` already accepts arbitrary fields — just extend the page templates and ingest prompt to populate them.
 
 2. **Inline footnote citations** — Currently citations are tracked at the page level via the frontmatter `sources` list. For research-grade content, upgrade to inline footnote citations (`[^1]: source.pdf, p.3`) so individual claims can be attributed. Requires: a footnote-aware lint check (catches duplicate/skipped numbers) and updated ingest prompt to maintain footnote registry. Additive to current schema — does not break existing pages.
 
