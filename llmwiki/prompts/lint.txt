@@ -24,7 +24,10 @@ Find information that may be outdated. Compare the `updated` and `sources` front
 
 ## Check 3: Missing Concept Pages
 
-Find concepts that are referenced via [[wikilinks]] across multiple pages but do not have their own page yet. These are gaps in the wiki where a substantial concept lacks dedicated coverage. A concept worth its own page is one mentioned in 2 or more existing pages.
+NOTE: Broken [[wikilinks]] (links pointing to non-existent pages) are already caught by a separate deterministic check. Do NOT simply list every broken wikilink. Instead, focus on:
+  - Concepts discussed substantively in 2+ pages that deserve their own dedicated page, whether or not they are wikilinked
+  - Concepts that are important enough to be a hub page but are currently only mentioned in passing
+  - Prioritize by importance: a concept mentioned in 5 pages matters more than one in 2
 
 ## Check 4: Weak Cross-References
 

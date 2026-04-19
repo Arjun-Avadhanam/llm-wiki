@@ -62,42 +62,51 @@ def _load_page_template(page_type: str) -> str:
     )
 
 
-def _strip_outer_fences(text: str) -> str:
-    """Remove outer markdown code fences if the LLM wrapped the output.
+def _clean_llm_page_output(text: str) -> str:
+    """Clean LLM output to ensure it starts with YAML frontmatter.
 
-    Some models (including DeepSeek V3) occasionally wrap their entire
-    markdown output in ``` ... ``` code fences, even when instructed not
-    to. This function defensively strips those outer fences while
-    preserving any inner code fences (e.g., ```sql blocks inside the page).
+    Handles two common LLM misbehaviors:
+    1. Outer code fences wrapping the entire output (``` ... ```).
+       Stripped by removing opening/closing fence lines.
+    2. Prose preamble before the frontmatter (e.g., "Here's the
+       updated page:"). Stripped by finding the first '---' that
+       is followed by a YAML-like key: value line.
 
-    Only strips if the text starts with ``` and the very first ``` is
-    NOT a ```sql or other language-tagged fence (which would indicate
-    it's part of the page content, not an outer wrapper).
+    Safety: If no frontmatter delimiter is found at all, the text
+    is returned unchanged — nothing is deleted. The preamble
+    stripping only activates when '---' is followed by a line
+    matching 'key: value' pattern (confirming it's real frontmatter,
+    not a horizontal rule or code content).
 
     Args:
         text: Raw LLM output that should be a markdown page.
 
     Returns:
-        The text with outer fences removed, or unchanged if no outer
-        fences were detected.
+        Cleaned text starting with '---' (frontmatter delimiter),
+        or the original text unchanged if no frontmatter is found.
     """
     stripped = text.strip()
-    if not stripped.startswith("```"):
-        return text
 
-    # Check if the opening fence is language-tagged (e.g., ```sql).
-    # If so, it's part of the page content — don't strip.
-    first_line = stripped.split("\n", 1)[0]
-    fence_tag = first_line[3:].strip()
-    if fence_tag and fence_tag not in ("markdown", "md", ""):
-        return text
+    # Step 1: Strip outer code fences if present
+    if stripped.startswith("```"):
+        first_line = stripped.split("\n", 1)[0]
+        fence_tag = first_line[3:].strip()
+        # Only strip generic fences, not language-tagged (e.g., ```sql)
+        if not fence_tag or fence_tag in ("markdown", "md"):
+            stripped = stripped.split("\n", 1)[1] if "\n" in stripped else ""
+            if stripped.rstrip().endswith("```"):
+                stripped = stripped.rstrip()[:-3].rstrip()
 
-    # Remove the opening ``` line and the closing ```
-    content = stripped.split("\n", 1)[1] if "\n" in stripped else ""
-    if content.rstrip().endswith("```"):
-        content = content.rstrip()[:-3].rstrip()
+    # Step 2: Strip prose preamble before frontmatter
+    if not stripped.startswith("---"):
+        # Search for '---' followed by a YAML key-value line.
+        # This confirms it's actual frontmatter, not a horizontal
+        # rule or --- inside a code block.
+        match = re.search(r"\n(---\n\w+\s*:)", stripped)
+        if match:
+            stripped = stripped[match.start() + 1:]  # +1 to skip \n
 
-    return content
+    return stripped
 
 
 def run_ingest(source_path: Path, dry_run: bool = False) -> dict:
@@ -270,7 +279,7 @@ def run_ingest(source_path: Path, dry_run: bool = False) -> dict:
                 total_tokens += resp.total_tokens
 
                 # Defensive code-fence stripping
-                page_content = _strip_outer_fences(resp.text)
+                page_content = _clean_llm_page_output(resp.text)
 
                 page_path = wiki_dir / op["filename"]
                 wiki.write_page(page_path, page_content)

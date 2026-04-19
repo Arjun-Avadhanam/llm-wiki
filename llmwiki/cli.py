@@ -85,9 +85,14 @@ def query(question, save):
 
 
 @cli.command()
-def lint():
+@click.option(
+    "--deterministic-only", is_flag=True,
+    help="Run only deterministic checks (no LLM call, instant and free).",
+)
+def lint(deterministic_only):
     """Health-check the wiki for issues."""
-    console.print("[yellow]lint not yet implemented[/yellow]")
+    from llmwiki.lint import run_lint
+    run_lint(deterministic_only=deterministic_only)
 
 
 @cli.command()
