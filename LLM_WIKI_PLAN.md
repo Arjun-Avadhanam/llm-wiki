@@ -556,6 +556,57 @@ Output a structured report with sections for each issue type. For each issue, be
 
 ---
 
+### Day 8 — Watcher Hardening + Interactive Shell (~5-6h, two sessions)
+
+**Goal:** Fully automatic ingest (no manual daemon start) + interactive REPL shell with chat mode.
+
+**Session 1: Watcher Daemon Hardening (~2-2.5h)**
+
+Makes the file watcher truly automatic — starts on Windows login, survives terminal closes and crashes, requires zero user intervention.
+
+| Task | Time | Details |
+|------|------|---------|
+| Create `.wslconfig` | 5m | Add `vmIdleTimeout=-1` and `instanceIdleTimeout=-1` to `C:\Users\arjun\.wslconfig` to prevent WSL auto-shutdown when terminals are closed. |
+| Create systemd user service | 20m | Write `~/.config/systemd/user/llm-wiki-watcher.service` with `Restart=always`, `RestartSec=5`, pointing at the venv Python and `watcher.py`. Enable with `systemctl --user enable llm-wiki-watcher` + `loginctl enable-linger arjun`. |
+| Windows Task Scheduler entry | 15m | Create a logon-trigger task that runs `wsl.exe -d Ubuntu` to ensure WSL boots on Windows login. Systemd then auto-starts the watcher service. Use `schtasks.exe` from WSL or the Task Scheduler GUI. |
+| PID file locking | 20m | Upgrade `watcher.py` from simple PID file to `fcntl.flock` — acquire an exclusive lock on `watcher.pid` at startup. If the lock is held, refuse to start (prevents double instances). If the lock is stale (process died), the OS releases it automatically. |
+| Keep-alive tmux workaround | 10m | For WSL 2.5.7 suspension bug (Microsoft/WSL#13291): add a `.bashrc` snippet that starts a detached tmux session (`tmux new-session -d -s keepalive 2>/dev/null`) to prevent VM suspension. |
+| **Test: systemd restart** | 15m | Start the service, kill the watcher process (`kill <pid>`), verify systemd restarts it within 5 seconds. Check `systemctl --user status llm-wiki-watcher`. |
+| **Test: terminal close survival** | 10m | Start a terminal, verify watcher is running (`systemctl --user status`), close all terminals, reopen a terminal, verify watcher is still running. |
+| **Test: full ingest cycle** | 15m | With watcher running via systemd (no manual start), drop a new `.md` file into `raw/` via Windows Explorer or Obsidian Web Clipper. Verify: file detected → ingest runs → pages created → desktop notification received → log.md updated. |
+
+**Session 1 deliverable:** User logs into Windows → WSL boots → systemd starts watcher → files dropped in `raw/` are auto-ingested with desktop notifications. Zero manual intervention.
+
+**Session 2: Interactive Shell (~3-3.5h)**
+
+Adds `llmwiki shell` — a persistent REPL where natural language input is auto-routed to `query` and commands work with tab completion.
+
+| Task | Time | Details |
+|------|------|---------|
+| Install `click-repl` | 5m | `pip install click-repl`, add to `requirements.txt`. Pulls in `prompt-toolkit` transitively. |
+| Basic REPL integration | 20m | Use `register_repl(cli)` or custom shell command. Verify: shell opens, existing commands work with tab completion, Ctrl+D exits. |
+| **Test: basic commands** | 10m | Inside the shell, run `status`, `lint --deterministic-only`, `ingest raw/<file> --dry-run`. Verify each works and output renders correctly with `rich`. |
+| Chat mode wrapper | 45m | Custom dispatch logic: if first word isn't in `{ingest, query, lint, status, watch, help, exit}`, prepend `query` and route. Handle edge cases: quoted strings, empty input, Ctrl+C (continue, don't exit), multi-word questions. |
+| **Test: chat mode** | 15m | Type plain questions: "What is a LEFT JOIN?", "explain window functions", "WHERE vs HAVING". Verify each routes to query and returns a grounded answer. Also test explicit `query "question" --save` still works. |
+| Persistent history | 10m | Add `FileHistory(".llmwiki_history")` to the prompt session. Verify: type commands, exit shell, reopen shell, press up-arrow — previous commands appear. |
+| **Test: history** | 5m | Open shell, run 3 commands, exit, reopen, press up-arrow 3 times. Verify all 3 recalled. |
+| Welcome banner | 20m | On shell start: display a `rich` Panel with available commands, chat mode hint, keyboard shortcuts, and current wiki stats (from `page_stats()`). |
+| `help` command | 15m | Show all commands with their flags and a one-line description. Include "Or just type any question directly" hint at the bottom. |
+| **Test: UX polish** | 10m | Open shell — verify banner displays with correct stats. Run `help` — verify all commands listed. Press Tab on empty prompt — verify command list appears. Type `ingest [TAB]` — verify file paths complete. |
+| Styled prompt | 10m | Custom prompt text (`llmwiki> `) with color via prompt_toolkit styles. |
+| Wire into CLI + update docs | 15m | Add `shell` command to `cli.py`. Update README with shell usage. Update CLAUDE.md if needed. |
+| **Test: end-to-end shell session** | 15m | Full workflow inside the shell: `status` → type a question (chat mode) → `ingest raw/<file>` → `lint --deterministic-only` → type another question → `exit`. Verify everything works without leaving the shell. |
+
+**Session 2 deliverable:** `llmwiki shell` opens an interactive session with welcome banner, tab completion, persistent history, and chat mode (plain text auto-routed to query).
+
+**Key design decisions:**
+- **No slash commands.** Commands are bare words (`ingest`, `lint`, `status`). Anything that doesn't match a command is a query. This matches how users naturally think — questions don't need syntax.
+- **Welcome banner shows state.** User immediately knows how big the wiki is and what commands are available.
+- **Three discovery layers.** Welcome banner (seen once), `help` command (on demand), tab completion (muscle memory). User never has to memorize anything.
+- **click-repl as foundation.** Auto-derives tab completion from Click commands. Chat mode added via ~20-line wrapper. Upgrade path to direct prompt_toolkit if needed later.
+
+---
+
 ## 7. Risk & Fallback Notes
 
 **Prompt iteration is the #1 time risk.** Getting the LLM to produce consistently well-formatted pages with correct wikilinks and frontmatter may take more iteration than estimated. Mitigation: days 2-4 have built-in iteration time, and the prompt templates in Section 5 give a concrete starting point.
@@ -598,8 +649,4 @@ Logical next steps after this week, in priority order:
 
 9. **Richer output formats** — Marp slide generation, matplotlib charts for data-heavy topics, Dataview queries in wiki pages.
 
-10. **Watcher daemon hardening** — Three upgrades to make `llmwiki watch` a robust background service:
-    - **Auto-restart on crash:** Create a systemd user service (`~/.config/systemd/user/llm-wiki-watcher.service`) with `Restart=always`. Enable with `systemctl --user enable llm-wiki-watcher` + `loginctl enable-linger arjun`. Note: WSL 2.5.7 has a known suspension bug (Microsoft/WSL#13291) where user services can be silently suspended even with `vmIdleTimeout=-1`; workaround is a keep-alive tmux session.
-    - **Survive Windows reboot:** Add a Windows Task Scheduler entry that runs `wsl.exe` on user logon to boot the WSL VM (systemd then starts the watcher service automatically). Must handle startup ordering — Task Scheduler should only ensure WSL is running, not start the watcher directly.
-    - **PID file locking:** Current implementation uses a simple PID file. Upgrade to proper file locking (`fcntl.flock`) to handle the edge case where a stale PID is recycled by the OS for a different process.
-    - Combined effort: ~1-1.5h, but WSL interaction quirks (suspension bug, startup ordering) may require debugging time. Best done after the watcher has been running manually for a few days to confirm stability.
+10. ~~**Watcher daemon hardening**~~ — Moved to Day 8 (Session 1).
