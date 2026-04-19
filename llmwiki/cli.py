@@ -80,7 +80,8 @@ def ingest(source_file, dry_run, ingest_all):
 @click.option("--save", is_flag=True, help="Save the answer as a wiki note page.")
 def query(question, save):
     """Ask a question against the wiki."""
-    console.print(f"[yellow]query not yet implemented — question: {question}[/yellow]")
+    from llmwiki.query import run_query
+    run_query(question, save=save)
 
 
 @cli.command()
