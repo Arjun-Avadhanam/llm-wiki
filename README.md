@@ -193,6 +193,28 @@ wiki/
 
 Every page has YAML frontmatter: `title`, `type`, `tags`, `sources`, `created`, `updated`.
 
+## Version control
+
+This repo contains only the **code** (CLI tool, prompts, templates). Your wiki content (`wiki/` and `raw/`) should be tracked in a separate git repo — this keeps code and content independent.
+
+To set up version control for your content:
+
+```bash
+cd /path/to/your/LLMWiki   # the directory containing raw/ and wiki/
+git init
+git branch -m main
+
+echo ".obsidian/
+raw/assets/
+watcher.pid
+watcher.log" > .gitignore
+
+git add raw/ wiki/ .gitignore
+git commit -m "initial wiki content"
+```
+
+You can then commit after each ingest session or periodically to checkpoint your wiki's evolution. The git history gives you a full timeline of how your knowledge base grew.
+
 ## Cost
 
 Using DeepSeek V3 via OpenRouter:
