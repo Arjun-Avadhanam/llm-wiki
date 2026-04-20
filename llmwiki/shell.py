@@ -23,7 +23,7 @@ from pathlib import Path
 
 import click
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import NestedCompleter, PathCompleter, WordCompleter
+from prompt_toolkit.completion import NestedCompleter, PathCompleter
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
 from rich.console import Console

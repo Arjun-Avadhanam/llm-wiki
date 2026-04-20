@@ -162,6 +162,22 @@ python3 -m llmwiki.cli watch --stop
 
 Monitors `raw/` for new `.md` files and auto-ingests them. Sends Windows desktop notifications via BurntToast (WSL only).
 
+### Interactive shell
+
+```bash
+python3 -m llmwiki.cli shell
+```
+
+Opens a persistent session with tab completion and command history. Type commands normally, or just type a question in natural language — it auto-routes to `query`:
+
+```
+llmwiki> status
+llmwiki> What is the difference between WHERE and HAVING?
+llmwiki> lint --deterministic-only
+llmwiki> explain window functions
+llmwiki> exit
+```
+
 ### Check status
 
 ```bash

@@ -30,7 +30,8 @@ cli.py (Click entry point, pre-command pending source check)
   ├── ingest.py  → run_ingest()   — 2-step: summary+plan JSON, then per-page create/update
   ├── query.py   → run_query()    — 2-step: page selection JSON, then synthesis
   ├── lint.py    → run_lint()     — deterministic checks (Python) + LLM heuristic checks
-  └── watcher.py → run_watcher()  — watchdog file monitor + BurntToast notifications
+  ├── watcher.py → run_watcher()  — watchdog file monitor + BurntToast notifications
+  └── shell.py   → run_shell()    — interactive REPL with chat mode + tab completion
 
 All modules use:
   ├── wiki.py   — single point of contact for ALL filesystem I/O (pages, index, log)
