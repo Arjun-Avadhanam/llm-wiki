@@ -16,6 +16,7 @@ Supports two modes:
       `llmwiki watch --stop`.
 """
 
+import fcntl
 import os
 import signal
 import subprocess
@@ -39,6 +40,46 @@ console = Console()
 
 # Path to the PID file for daemon mode
 _PID_FILE = Path(load_config()["paths"]["wiki_dir"]) / "watcher.pid"
+
+# File handle kept open for the lifetime of the process to hold the lock.
+_lock_fh = None
+
+
+def _acquire_lock() -> bool:
+    """Acquire an exclusive file lock on watcher.pid to prevent double instances.
+
+    Uses fcntl.flock which is automatically released when the process dies
+    (no stale lock problem). If the lock is already held by another process,
+    returns False.
+
+    Returns:
+        True if lock acquired, False if another watcher is already running.
+    """
+    global _lock_fh
+    _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _lock_fh = open(_PID_FILE, "w")
+    try:
+        fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock_fh.write(str(os.getpid()))
+        _lock_fh.flush()
+        return True
+    except OSError:
+        _lock_fh.close()
+        _lock_fh = None
+        return False
+
+
+def _release_lock() -> None:
+    """Release the file lock and clean up the PID file."""
+    global _lock_fh
+    if _lock_fh is not None:
+        try:
+            fcntl.flock(_lock_fh, fcntl.LOCK_UN)
+            _lock_fh.close()
+        except OSError:
+            pass
+        _lock_fh = None
+    _PID_FILE.unlink(missing_ok=True)
 
 
 def _make_observer(watch_path: str):
@@ -203,6 +244,10 @@ def run_watcher(daemon: bool = False) -> None:
         return
 
     # Foreground mode
+    if not _acquire_lock():
+        console.print("[red]Another watcher is already running. Use 'llmwiki watch --stop' first.[/red]")
+        return
+
     console.print(f"[bold]Watching {raw_dir} for new files...[/bold]")
     console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
 
@@ -218,30 +263,59 @@ def run_watcher(daemon: bool = False) -> None:
         observer.stop()
 
     observer.join()
+    _release_lock()
     console.print("[green]Watcher stopped.[/green]")
 
 
 def stop_watcher() -> None:
-    """Stop a running background watcher by reading its PID file."""
-    if not _PID_FILE.exists():
-        console.print("[yellow]No watcher PID file found — is it running?[/yellow]")
-        return
+    """Stop a running watcher (daemon or systemd service).
 
-    pid = int(_PID_FILE.read_text().strip())
+    Tries two methods:
+    1. Read PID from watcher.pid and send SIGTERM (for daemon mode)
+    2. Stop the systemd user service (for service mode)
+    """
+    stopped = False
+
+    # Method 1: PID file
+    if _PID_FILE.exists():
+        try:
+            pid = int(_PID_FILE.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+            console.print(f"[green]Watcher (PID {pid}) stopped.[/green]")
+            stopped = True
+        except (ProcessLookupError, ValueError):
+            console.print(f"[yellow]Stale PID file — cleaning up.[/yellow]")
+        _PID_FILE.unlink(missing_ok=True)
+
+    # Method 2: systemd service
     try:
-        os.kill(pid, signal.SIGTERM)
-        console.print(f"[green]Watcher (PID {pid}) stopped.[/green]")
-    except ProcessLookupError:
-        console.print(f"[yellow]Process {pid} not found — stale PID file.[/yellow]")
+        result = subprocess.run(
+            ["systemctl", "--user", "is-active", "llm-wiki-watcher"],
+            capture_output=True, text=True,
+        )
+        if result.stdout.strip() == "active":
+            subprocess.run(
+                ["systemctl", "--user", "stop", "llm-wiki-watcher"],
+                check=True,
+            )
+            console.print("[green]Stopped systemd llm-wiki-watcher service.[/green]")
+            stopped = True
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
 
-    _PID_FILE.unlink(missing_ok=True)
+    if not stopped:
+        console.print("[yellow]No running watcher found.[/yellow]")
 
 
-# Allow running as `python -m llmwiki.watcher <raw_dir>` for daemon mode.
+# Allow running as `python -m llmwiki.watcher <raw_dir>` for daemon/systemd mode.
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         raw_path = sys.argv[1]
-        # Override the raw dir for this subprocess
+
+        if not _acquire_lock():
+            print("Another watcher is already running. Exiting.")
+            sys.exit(1)
+
         observer = _make_observer(raw_path)
         observer.schedule(_NewSourceHandler(), raw_path, recursive=False)
         observer.start()
@@ -251,5 +325,6 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             observer.stop()
         observer.join()
+        _release_lock()
     else:
         run_watcher(daemon=False)
