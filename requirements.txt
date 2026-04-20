@@ -4,3 +4,4 @@ python-frontmatter
 pyyaml
 rich
 watchdog
+click-repl

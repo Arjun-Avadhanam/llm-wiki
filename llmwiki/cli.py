@@ -129,5 +129,17 @@ def watch(daemon, stop):
         run_watcher(daemon=False)
 
 
+@cli.command()
+@click.pass_context
+def shell(ctx):
+    """Interactive shell with chat mode.
+
+    Type commands (ingest, query, lint, status) or just ask a question
+    in natural language — it will be automatically routed to query.
+    """
+    from llmwiki.shell import run_shell
+    run_shell(ctx)
+
+
 if __name__ == "__main__":
     cli()
