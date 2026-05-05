@@ -109,6 +109,58 @@ def _clean_llm_page_output(text: str) -> str:
     return stripped
 
 
+# Valid page type directory names. Used to normalize LLM output that
+# may pluralize or capitalize incorrectly.
+_VALID_TYPES = {"concept", "source-summary", "comparison", "reference", "note"}
+
+
+def _normalize_page_type(raw_type: str) -> str:
+    """Normalize an LLM-returned page type to a valid directory name.
+
+    Handles common LLM mistakes:
+    - Pluralization: "concepts" → "concept", "comparisons" → "comparison"
+    - Capitalization: "Concept" → "concept"
+
+    Args:
+        raw_type: The page type string from the LLM's JSON plan.
+
+    Returns:
+        A valid page type directory name.
+
+    Raises:
+        ValueError: If the type can't be normalized to a valid one.
+    """
+    normalized = raw_type.lower().rstrip("s")
+    if normalized in _VALID_TYPES:
+        return normalized
+    # Try without stripping (e.g., "note" shouldn't become "not")
+    if raw_type.lower() in _VALID_TYPES:
+        return raw_type.lower()
+    # source-summary special case
+    if "source" in raw_type.lower() or "summary" in raw_type.lower():
+        return "source-summary"
+    raise ValueError(f"Unknown page type '{raw_type}'. Expected one of: {_VALID_TYPES}")
+
+
+def _normalize_filename(filename: str) -> str:
+    """Normalize an LLM-returned filename to use valid directory names.
+
+    Fixes the directory portion (page type) while preserving the
+    kebab-case file name. E.g., "Concepts/my-page.md" → "concept/my-page.md"
+
+    Args:
+        filename: The filename from the LLM's JSON plan.
+
+    Returns:
+        Normalized filename with valid page type directory.
+    """
+    parts = filename.split("/", 1)
+    if len(parts) == 2:
+        page_type = _normalize_page_type(parts[0])
+        return f"{page_type}/{parts[1]}"
+    return filename
+
+
 def run_ingest(source_path: Path, dry_run: bool = False) -> dict:
     """Execute the full ingest pipeline for a single source document.
 
@@ -219,23 +271,25 @@ def run_ingest(source_path: Path, dry_run: bool = False) -> dict:
 
     all_page_ops = []
     for p in pages_to_create:
+        filename = _normalize_filename(p["filename"])
         all_page_ops.append({
-            "filename": p["filename"],
-            "page_type": p["type"],
+            "filename": filename,
+            "page_type": _normalize_page_type(p["type"]),
             "title": p["title"],
             "operation": "create",
             "change_description": p.get("reason", "Create new page."),
             "existing_content": "",
         })
     for p in pages_to_update:
-        page_path = wiki_dir / p["filename"]
+        filename = _normalize_filename(p["filename"])
+        page_path = wiki_dir / filename
         existing = ""
         if page_path.exists():
             existing = wiki.read_page(page_path)
         all_page_ops.append({
-            "filename": p["filename"],
-            "page_type": p["filename"].split("/")[0],
-            "title": "",  # Will be parsed from existing page or plan
+            "filename": filename,
+            "page_type": filename.split("/")[0],
+            "title": "",
             "operation": "update",
             "change_description": p.get("changes", "Update based on new source."),
             "existing_content": existing,
@@ -304,12 +358,12 @@ def run_ingest(source_path: Path, dry_run: bool = False) -> dict:
         "description": f"Source summary of {source_title} ({source_filename})",
     })
 
-    # Add entries for newly created pages
+    # Add entries for newly created pages (with normalized types/filenames)
     for p in pages_to_create:
         index_entries.append({
-            "type": p["type"],
+            "type": _normalize_page_type(p["type"]),
             "title": p["title"],
-            "filename": p["filename"],
+            "filename": _normalize_filename(p["filename"]),
             "description": p.get("reason", ""),
         })
 
