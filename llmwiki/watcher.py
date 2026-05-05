@@ -140,38 +140,32 @@ def _send_notification(title: str, message: str) -> None:
         pass
 
 
-class _NewSourceHandler(FileSystemEventHandler):
-    """Watchdog event handler that triggers ingest on new .md files.
+import queue
+import threading
 
-    Tracks which files have been processed in-memory to avoid
-    double-processing from duplicate events (watchdog can fire both
-    created and modified events for the same file).
+# Queue for files waiting to be ingested. The event handler adds to it;
+# the worker thread processes one at a time.
+_ingest_queue: queue.Queue = queue.Queue()
+
+
+def _ingest_worker():
+    """Worker thread that processes the ingest queue sequentially.
+
+    Runs in a daemon thread. Pulls file paths from the queue one at a
+    time, ingests each, and sends notifications. This ensures multiple
+    files clipped in quick succession are all processed, not lost.
     """
+    from llmwiki.ingest import run_ingest
 
-    def __init__(self):
-        super().__init__()
-        self._processed: set[str] = set()
+    while True:
+        path = _ingest_queue.get()
+        if path is None:
+            break
 
-    def _handle_new_file(self, path: Path) -> None:
-        """Process a new source file — shared logic for all event types."""
-        if path.suffix != ".md":
-            return
-
-        # Avoid double-processing (watchdog can fire multiple events
-        # for the same file: created + modified, or moved + modified)
-        if path.name in self._processed:
-            return
-        self._processed.add(path.name)
-
-        # Check if already ingested
-        if path.name in wiki.get_ingested_sources():
-            return
-
-        console.print(f"\n[bold cyan]New file detected:[/bold cyan] {path.name}")
+        console.print(f"\n[bold cyan]Processing:[/bold cyan] {path.name}")
         _send_notification("LLM Wiki", f"Ingesting: {path.name}")
 
         try:
-            from llmwiki.ingest import run_ingest
             result = run_ingest(path)
             created = len(result['pages_created'])
             updated = len(result['pages_updated'])
@@ -182,11 +176,43 @@ class _NewSourceHandler(FileSystemEventHandler):
         except Exception as e:
             console.print(f"[red]Ingest failed for {path.name}: {e}[/red]")
             _send_notification("LLM Wiki", f"Ingest failed: {path.name}")
+        finally:
+            _ingest_queue.task_done()
+
+
+class _NewSourceHandler(FileSystemEventHandler):
+    """Watchdog event handler that queues new .md files for ingestion.
+
+    Instead of processing inline (which blocks and causes missed files
+    when multiple are added quickly), files are added to a queue. A
+    worker thread processes them sequentially.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._seen: set[str] = set()
+
+    def _enqueue_file(self, path: Path) -> None:
+        """Add a file to the ingest queue if it's new and un-ingested."""
+        if path.suffix != ".md":
+            return
+
+        # Deduplicate events for the same file (watchdog fires multiple)
+        if path.name in self._seen:
+            return
+        self._seen.add(path.name)
+
+        # Skip already-ingested files
+        if path.name in wiki.get_ingested_sources():
+            return
+
+        console.print(f"\n[bold cyan]New file detected:[/bold cyan] {path.name} (queued)")
+        _ingest_queue.put(path)
 
     def on_created(self, event):
         """Called when a new file is created in the watched directory."""
         if not event.is_directory:
-            self._handle_new_file(Path(event.src_path))
+            self._enqueue_file(Path(event.src_path))
 
     def on_moved(self, event):
         """Called when a file is moved/renamed into the watched directory.
@@ -196,7 +222,7 @@ class _NewSourceHandler(FileSystemEventHandler):
         'moved' event instead of 'created'.
         """
         if not event.is_directory:
-            self._handle_new_file(Path(event.dest_path))
+            self._enqueue_file(Path(event.dest_path))
 
     def on_closed(self, event):
         """Called when a file is closed after writing (Linux only).
@@ -206,7 +232,24 @@ class _NewSourceHandler(FileSystemEventHandler):
         completes, ensuring we read the full content.
         """
         if not event.is_directory:
-            self._handle_new_file(Path(event.src_path))
+            self._enqueue_file(Path(event.src_path))
+
+
+def _startup_scan():
+    """Check for un-ingested files on startup.
+
+    Catches files added while the watcher was not running (e.g.,
+    laptop was off, WSL was shut down). Any pending files are
+    queued for ingestion before the watch loop begins.
+    """
+    pending = wiki.get_pending_sources()
+    if pending:
+        console.print(f"[yellow]Startup scan: {len(pending)} un-ingested file(s) found[/yellow]")
+        for p in pending:
+            console.print(f"  Queuing: {p.name}")
+            _ingest_queue.put(p)
+    else:
+        console.print("[dim]Startup scan: all sources up to date[/dim]")
 
 
 def run_watcher(daemon: bool = False) -> None:
@@ -251,6 +294,13 @@ def run_watcher(daemon: bool = False) -> None:
     console.print(f"[bold]Watching {raw_dir} for new files...[/bold]")
     console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
 
+    # Start the worker thread that processes the ingest queue
+    worker = threading.Thread(target=_ingest_worker, daemon=True)
+    worker.start()
+
+    # Scan for files missed while the watcher was not running
+    _startup_scan()
+
     observer = _make_observer(raw_dir)
     observer.schedule(_NewSourceHandler(), raw_dir, recursive=False)
     observer.start()
@@ -261,8 +311,10 @@ def run_watcher(daemon: bool = False) -> None:
     except KeyboardInterrupt:
         console.print("\n[yellow]Stopping watcher...[/yellow]")
         observer.stop()
+        _ingest_queue.put(None)  # Signal worker to exit
 
     observer.join()
+    worker.join(timeout=5)
     _release_lock()
     console.print("[green]Watcher stopped.[/green]")
 
@@ -316,6 +368,11 @@ if __name__ == "__main__":
             print("Another watcher is already running. Exiting.")
             sys.exit(1)
 
+        worker = threading.Thread(target=_ingest_worker, daemon=True)
+        worker.start()
+
+        _startup_scan()
+
         observer = _make_observer(raw_path)
         observer.schedule(_NewSourceHandler(), raw_path, recursive=False)
         observer.start()
@@ -324,7 +381,9 @@ if __name__ == "__main__":
                 time.sleep(1)
         except KeyboardInterrupt:
             observer.stop()
+            _ingest_queue.put(None)
         observer.join()
+        worker.join(timeout=5)
         _release_lock()
     else:
         run_watcher(daemon=False)
